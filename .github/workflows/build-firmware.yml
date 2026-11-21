@@ -16,47 +16,76 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      BF_CONFIG: ${{ inputs.config }}
+      BF_OPTIONS: ${{ inputs.options }}
+
     steps:
       - name: Validate inputs
+        shell: bash
         run: |
-          # отсекаем инъекции: только допустимые символы
-          echo 'CONFIG="${{ inputs.config }}"' | grep -qE '^CONFIG="[A-Z0-9_]{1,32}"$' \
-            || { echo "Bad config name"; exit 1; }
-          echo 'OPTIONS="${{ inputs.options }}"' | grep -qE '^OPTIONS="[A-Za-z0-9_ -]{0,512}"$' \
-            || { echo "Bad options"; exit 1; }
+          [[ "$BF_CONFIG" =~ ^[A-Z0-9_]{1,32}$ ]] || {
+            echo "::error::Недопустимое имя CONFIG"
+            exit 1
+          }
+
+          # Разрешены только имена макросов и обычные пробелы.
+          [[ ${#BF_OPTIONS} -le 512 && "$BF_OPTIONS" =~ ^[A-Z0-9_\ ]*$ ]] || {
+            echo "::error::Передавай имена макросов через пробел, без -D"
+            exit 1
+          }
+
+          read -r -a options <<< "$BF_OPTIONS"
+          for option in "${options[@]}"; do
+            [[ "$option" =~ ^[A-Z_][A-Z0-9_]*$ ]] || {
+              echo "::error::Недопустимое имя макроса: $option"
+              exit 1
+            }
+          done
 
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive   # забирает lib/modules/mavlink и остальные
+          submodules: recursive
           fetch-depth: 1
 
-      - name: Install toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi
+      - name: Install required ARM toolchain
+        run: make arm_sdk_install
 
       - name: Build
-        env:
-          BF_CONFIG: ${{ inputs.config }}
-          BF_OPTIONS: ${{ inputs.options }}
+        shell: bash
         run: |
-          # CLOUD_BUILD зашит здесь, чтобы сборка в CI имела ту же семантику
-          # дефолтов, что и облачный билд из конфигуратора
-          make hex CONFIG="$BF_CONFIG" \
-            EXTRA_FLAGS="-DCLOUD_BUILD $(echo "$BF_OPTIONS" | tr ' ' '\n' | sed 's/.*/-D&/' | tr '\n' ' ')"
+          flags=(-DCLOUD_BUILD)
+          read -r -a options <<< "$BF_OPTIONS"
+          for option in "${options[@]}"; do
+            flags+=("-D$option")
+          done
+
+          make hex CONFIG="$BF_CONFIG" EXTRA_FLAGS="${flags[*]}"
 
       - name: Rename output
+        shell: bash
         run: |
+          shopt -s nullglob
+          files=(obj/*.hex)
+          if (( ${#files[@]} == 0 )); then
+            echo "::error::Сборка не создала HEX-файл в obj/"
+            exit 1
+          fi
+
           mkdir -p out
-          for f in obj/*.hex; do
-            cp "$f" "out/$(echo "$f" | sed 's/.*\///;s/\.hex$//')_$(echo -n "${{ inputs.options }}" | sha256sum | cut -c1-8).hex"
+          hash=$(printf '%s' "$BF_OPTIONS" | sha256sum | cut -c1-8)
+          for file in "${files[@]}"; do
+            name=${file##*/}
+            cp -- "$file" "out/${name%.hex}_${hash}.hex"
           done
-          ls -lh out/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ inputs.config }}
           path: out/*.hex
+          if-no-files-found: error
           retention-days: 30
