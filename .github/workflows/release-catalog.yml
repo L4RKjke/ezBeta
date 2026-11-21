@@ -18,24 +18,40 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: Generate targets list
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          make targets | awk '
+            $NF ~ /^(\[[A-Z0-9]+\]|\([A-Z0-9]+\))$/ {
+              name = $1
+              mcu = $NF
+              gsub(/[][+()]/, "", name)
+              print name "," substr(mcu, 2, length(mcu) - 2)
+            }
+          ' | sort -u | jq -Rn '
+            [inputs | split(",") | {config: .[0], mcu: .[1]}]
+          ' > targets.generated.json
+
       - name: Generate builds.json
         shell: bash
         run: |
           set -euo pipefail
 
-          version="${GITHUB_REF_NAME}"          # ezb-4.5.1-r1
+          version="${GITHUB_REF_NAME}"  # Например: ezb-4.5.1-r1
           sha="$(git rev-parse HEAD)"
 
           jq -n \
             --arg version "$version" \
             --arg commit "$sha" \
             --slurpfile options build_options.json \
-            --slurpfile targets targets.json \
+            --slurpfile targets targets.generated.json
             '{
               version: $version,
               commit: $commit,
               options: $options[0].options,
-              targets: $targets[0].targets
+              targets: $targets[0]
             }' > builds.json
 
           cat builds.json
