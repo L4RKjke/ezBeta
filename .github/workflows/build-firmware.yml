@@ -49,36 +49,95 @@ jobs:
           [[ "$BF_CONFIG" =~ ^[A-Z0-9_]{1,32}$ ]] || {
             echo "::error::Недопустимое имя CONFIG"; exit 1; }
 
-          [[ ${#BF_OPTIONS} -le 512 && "$BF_OPTIONS" =~ ^[A-Z0-9_\ ]*$ ]] || {
-            echo "::error::Опции передаются именами через пробел"; exit 1; }
+          # ENABLE_* может содержать «=значение», остальные — только имена
+          [[ ${#BF_OPTIONS} -le 512 && "$BF_OPTIONS" =~ ^[A-Z0-9_+=\ .-]*$ ]] || {
+            echo "::error::Недопустимые символы в опциях"; exit 1; }
 
           jq -e . build_options.json > /dev/null || {
             echo "::error::build_options.json не читается"; exit 1; }
 
           flags=(-DCLOUD_BUILD)
+          read -r -a chosen <<< "$BF_OPTIONS"
 
-          # Дефолтные опции добавляются всегда — так же поступает облачный сбор
-          while read -r f; do
-            [[ -n "$f" ]] && flags+=("-D$f")
-          done < <(jq -r '.options[] | select(.default == true) | .flags[]' build_options.json)
+          # --- 1. ENABLE_*: полный флаг со значением проходит как есть ---
+          for opt in "${chosen[@]}"; do
+            if [[ "$opt" == ENABLE_* ]]; then
+              [[ "$opt" =~ ^ENABLE_[A-Z0-9_]+(=[A-Za-z0-9_./+,-]{1,64})?$ ]] || {
+                echo "::error::Неверный формат ENABLE-флага: $opt"; exit 1; }
+              flags+=("$opt")
+            fi
+          done
 
-          if [[ -n "$BF_OPTIONS" ]]; then
-            read -r -a chosen <<< "$BF_OPTIONS"
-            for opt in "${chosen[@]}"; do
-              # ENABLE_-флаги проходят как есть, полным именем
-              if [[ "$opt" =~ ^ENABLE_[A-Z0-9_]+$ ]]; then
-                flags+=("$opt"); continue
-              fi
-              if ! jq -e --arg n "$opt" 'any(.options[]; .name == $n)' build_options.json > /dev/null; then
-                echo "::error::Неизвестная опция: $opt"; exit 1
-              fi
-              while read -r f; do
-                [[ -n "$f" ]] && flags+=("-D$f")
-              done < <(jq -r --arg n "$opt" '.options[] | select(.name == $n) | .flags[]' build_options.json)
-            done
+          # --- 2. Обычные опции: только имена из каталога ---
+          regular=()
+          for opt in "${chosen[@]}"; do
+            [[ "$opt" == ENABLE_* ]] && continue
+            regular+=("$opt")
+          done
+
+          if [[ $(printf '%s\n' "${regular[@]}" | sort -u | wc -l) -ne ${#regular[@]} ]]; then
+            echo "::error::Дубликат среди опций"; exit 1
           fi
 
-          # дедупликация: дефолты + выбор пользователя могут пересекаться
+          for opt in "${regular[@]}"; do
+            if ! jq -e --arg n "$opt" 'any(.options[]; .name == $n)' \
+                 build_options.json > /dev/null; then
+              echo "::error::Неизвестная опция: $opt"; exit 1
+            fi
+          done
+
+          # --- 3. Единичный выбор в группах радио/телеметрия/мотор ---
+          for g in radio telemetry motor; do
+            cnt=0
+            for opt in "${regular[@]}"; do
+              if jq -e --arg n "$opt" --arg g "$g" \
+                   'any(.options[]; .name == $n and .group == $g)' \
+                   build_options.json > /dev/null; then
+                cnt=$((cnt+1))
+              fi
+            done
+            [[ $cnt -le 1 ]] || {
+              echo "::error::В группе $g допускается только одна опция"; exit 1; }
+          done
+
+          # --- 4. Конфликты: между выбранными пользователем ---
+          for opt in "${regular[@]}"; do
+            for other in "${regular[@]}"; do
+              [[ "$opt" == "$other" ]] && continue
+              if jq -e --arg o "$opt" --arg t "$other" \
+                   'any(.options[]; .name == $o and ((.conflicts // []) | index($t)))' \
+                   build_options.json > /dev/null; then
+                echo "::error::Опции $opt и $other несовместимы"; exit 1
+              fi
+            done
+          done
+
+          # --- 5. Конфликтующие с выбором дефолты — исключить ---
+          excluded=()
+          for opt in "${regular[@]}"; do
+            while read -r c; do
+              [[ -n "$c" ]] && excluded+=("$c")
+            done < <(jq -r --arg n "$opt" '.options[] | select(.name == $n) | (.conflicts // [])[]' build_options.json)
+          done
+
+          while read -r name; do
+            if [[ " ${excluded[*]:-} " == *" $name "* ]]; then
+              echo "Пропуск дефолта $name: конфликтует с выбором пользователя"
+              continue
+            fi
+            while read -r f; do
+              [[ -n "$f" ]] && flags+=("-D$f")
+            done < <(jq -r --arg n "$name" '.options[] | select(.name == $n) | .flags[]' build_options.json)
+          done < <(jq -r '.options[] | select(.default == true) | .name')
+
+          # --- 6. Флаги выбранных пользователем опций ---
+          for opt in "${regular[@]}"; do
+            while read -r f; do
+              [[ -n "$f" ]] && flags+=("-D$f")
+            done < <(jq -r --arg n "$opt" '.options[] | select(.name == $n) | .flags[]' build_options.json)
+          done
+
+          # --- 7. Канонизация: сортировка + дедупликация ---
           mapfile -t flags < <(printf '%s\n' "${flags[@]}" | sort -u)
           canonical=$(printf '%s ' "${flags[@]}")
           echo "Итоговые флаги: $canonical"
