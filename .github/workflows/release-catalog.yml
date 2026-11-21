@@ -1,0 +1,55 @@
+name: Release catalog
+
+on:
+  push:
+    tags:
+      - 'ezb-*'
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Generate builds.json
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME}"          # ezb-4.5.1-r1
+          sha="$(git rev-parse HEAD)"
+
+          jq -n \
+            --arg version "$version" \
+            --arg commit "$sha" \
+            --slurpfile options build_options.json \
+            --slurpfile targets targets.json \
+            '{
+              version: $version,
+              commit: $commit,
+              options: $options[0].options,
+              targets: $targets[0].targets
+            }' > builds.json
+
+          cat builds.json
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "Release уже существует"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "ezBeta $GITHUB_REF_NAME" \
+              builds.json
+          fi

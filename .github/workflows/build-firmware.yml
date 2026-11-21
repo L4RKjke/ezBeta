@@ -17,12 +17,18 @@ on:
         required: false
         type: string
         default: ''
+      version:
+        description: 'Релиз для выкладки, например ezb-4.5.1-r1. Пусто — только artifact'
+        required: false
+        type: string
+        default: ''
+
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     env:
       BF_CONFIG: ${{ inputs.config }}
       BF_OPTIONS: ${{ inputs.options }}
@@ -101,6 +107,27 @@ jobs:
           for file in "${files[@]}"; do
             name=${file##*/}
             cp -- "$file" "out/${name%.hex}_${hash}.hex"
+          done
+
+      - name: Upload to release
+        if: ${{ inputs.version != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BF_VERSION: ${{ inputs.version }}
+        run: |
+          gh release view "$BF_VERSION" > /dev/null 2>&1 || {
+            echo "::error::Релиз $BF_VERSION не существует (сначала release-catalog.yml)"; exit 1; }
+
+          mkdir -p out
+          shopt -s nullglob
+          for file in out/*.hex; do
+            name=${file##*/}
+            if gh release view "$BF_VERSION" --json assets -q '.assets[].name' | grep -qx "$name"; then
+              echo "Asset $name уже есть в релизе — пропуск"
+            else
+              gh release upload "$BF_VERSION" "$file"
+            fi
           done
 
       - name: Upload artifact

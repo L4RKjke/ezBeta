@@ -1,0 +1,7 @@
+{
+    "version": 1,
+    "targets": [
+        { "config": "HAKRCF405V2", "name": "HAKRC F405 V2", "mcu": "STM32F405" },
+        { "config": "HAKRCF405V3", "name": "HAKRC F405 V3", "mcu": "STM32F405" }
+    ]
+}
