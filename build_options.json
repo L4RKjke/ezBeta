@@ -1,0 +1,20 @@
+{
+    "version": 1,
+    "options": [
+        { "name": "CRSF",        "flags": ["USE_SERIALRX_CRSF", "USE_TELEMETRY_CRSF", "USE_TELEMETRY", "USE_SERIALRX"], "default": true },
+        { "name": "SBUS",        "flags": ["USE_SERIALRX_SBUS", "USE_SERIALRX"], "default": false },
+        { "name": "FPORT",       "flags": ["USE_SERIALRX_FPORT", "USE_TELEMETRY_SMARTPORT", "USE_TELEMETRY", "USE_SERIALRX"], "default": false },
+        { "name": "IBUS",        "flags": ["USE_SERIALRX_IBUS", "USE_SERIALRX"], "default": false },
+        { "name": "JETIEXBUS",   "flags": ["USE_SERIALRX_JETIEXBUS"], "default": false },
+        { "name": "DSHOT",       "flags": ["USE_DSHOT"], "default": true },
+        { "name": "GPS",         "flags": ["USE_GPS"], "default": true },
+        { "name": "LED_STRIP",   "flags": ["USE_LED_STRIP"], "default": false },
+        { "name": "OSD_SD",      "flags": ["USE_OSD_SD"], "default": true },
+        { "name": "OSD_HD",      "flags": ["USE_OSD_HD"], "default": false },
+        { "name": "VTX",         "flags": ["USE_VTX"], "default": true },
+        { "name": "MAGNETOMETER","flags": ["USE_MAGNETOMETER"], "default": false },
+        { "name": "SOFTSERIAL",  "flags": ["USE_SOFTSERIAL"], "default": false },
+        { "name": "PINIO",       "flags": ["USE_PINIO"], "default": false },
+        { "name": "SERVOS",      "flags": ["USE_SERVOS"], "default": false }
+    ]
+}

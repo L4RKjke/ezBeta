@@ -8,7 +8,12 @@ on:
         required: true
         type: string
       options:
-        description: 'EXTRA_FLAGS: флаги через пробел, например USE_VTX USE_SERVOS'
+        description: 'Опции в нотации конфигуратора: CRSF GPS SERVOS'
+        required: false
+        type: string
+        default: ''
+      ref:
+        description: 'Ветка или тег для сборки (позже придёт из каталога версий)'
         required: false
         type: string
         default: ''
@@ -23,47 +28,62 @@ jobs:
       BF_OPTIONS: ${{ inputs.options }}
 
     steps:
-      - name: Validate inputs
-        shell: bash
-        run: |
-          [[ "$BF_CONFIG" =~ ^[A-Z0-9_]{1,32}$ ]] || {
-            echo "::error::Недопустимое имя CONFIG"
-            exit 1
-          }
-
-          # Разрешены только имена макросов и обычные пробелы.
-          [[ ${#BF_OPTIONS} -le 512 && "$BF_OPTIONS" =~ ^[A-Z0-9_\ ]*$ ]] || {
-            echo "::error::Передавай имена макросов через пробел, без -D"
-            exit 1
-          }
-
-          read -r -a options <<< "$BF_OPTIONS"
-          for option in "${options[@]}"; do
-            [[ "$option" =~ ^[A-Z_][A-Z0-9_]*$ ]] || {
-              echo "::error::Недопустимое имя макроса: $option"
-              exit 1
-            }
-          done
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 1
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Validate and expand options
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          [[ "$BF_CONFIG" =~ ^[A-Z0-9_]{1,32}$ ]] || {
+            echo "::error::Недопустимое имя CONFIG"; exit 1; }
+
+          [[ ${#BF_OPTIONS} -le 512 && "$BF_OPTIONS" =~ ^[A-Z0-9_\ ]*$ ]] || {
+            echo "::error::Опции передаются именами через пробел"; exit 1; }
+
+          jq -e . build_options.json > /dev/null || {
+            echo "::error::build_options.json не читается"; exit 1; }
+
+          flags=(-DCLOUD_BUILD)
+
+          # Дефолтные опции добавляются всегда — так же поступает облачный сбор
+          while read -r f; do
+            [[ -n "$f" ]] && flags+=("-D$f")
+          done < <(jq -r '.options[] | select(.default == true) | .flags[]' build_options.json)
+
+          if [[ -n "$BF_OPTIONS" ]]; then
+            read -r -a chosen <<< "$BF_OPTIONS"
+            for opt in "${chosen[@]}"; do
+              # ENABLE_-флаги проходят как есть, полным именем
+              if [[ "$opt" =~ ^ENABLE_[A-Z0-9_]+$ ]]; then
+                flags+=("$opt"); continue
+              fi
+              if ! jq -e --arg n "$opt" 'any(.options[]; .name == $n)' build_options.json > /dev/null; then
+                echo "::error::Неизвестная опция: $opt"; exit 1
+              fi
+              while read -r f; do
+                [[ -n "$f" ]] && flags+=("-D$f")
+              done < <(jq -r --arg n "$opt" '.options[] | select(.name == $n) | .flags[]' build_options.json)
+            done
+          fi
+
+          # дедупликация: дефолты + выбор пользователя могут пересекаться
+          mapfile -t flags < <(printf '%s\n' "${flags[@]}" | sort -u)
+          canonical=$(printf '%s ' "${flags[@]}")
+          echo "Итоговые флаги: $canonical"
+          echo "BF_FLAGS_CANONICAL=$canonical" >> "$GITHUB_ENV"
 
       - name: Install required ARM toolchain
         run: make arm_sdk_install
 
       - name: Build
         shell: bash
-        run: |
-          flags=(-DCLOUD_BUILD)
-          read -r -a options <<< "$BF_OPTIONS"
-          for option in "${options[@]}"; do
-            flags+=("-D$option")
-          done
-
-          make hex CONFIG="$BF_CONFIG" EXTRA_FLAGS="${flags[*]}"
+        run: make hex CONFIG="$BF_CONFIG" EXTRA_FLAGS="$BF_FLAGS_CANONICAL"
 
       - name: Rename output
         shell: bash
@@ -71,12 +91,13 @@ jobs:
           shopt -s nullglob
           files=(obj/*.hex)
           if (( ${#files[@]} == 0 )); then
-            echo "::error::Сборка не создала HEX-файл в obj/"
-            exit 1
+            echo "::error::Сборка не создала HEX-файл в obj/"; exit 1
           fi
 
           mkdir -p out
-          hash=$(printf '%s' "$BF_OPTIONS" | sha256sum | cut -c1-8)
+          # хэш считаем по каноническим флагам, а не по сырому вводу:
+          # одинаковые сборки дают одинаковое имя файла
+          hash=$(printf '%s' "$BF_FLAGS_CANONICAL" | sha256sum | cut -c1-8)
           for file in "${files[@]}"; do
             name=${file##*/}
             cp -- "$file" "out/${name%.hex}_${hash}.hex"
