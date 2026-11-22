@@ -38,22 +38,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          version="${GITHUB_REF_NAME}"  # Например: ezb-4.5.1-r1
+          version="${GITHUB_REF_NAME}"
           sha="$(git rev-parse HEAD)"
-
-          jq -n \
-            --arg version "$version" \
-            --arg commit "$sha" \
-            --slurpfile options build_options.json \
-            --slurpfile targets targets.generated.json
-            '{
-              version: $version,
-              commit: $commit,
-              options: $options[0].options,
-              targets: $targets[0]
-            }' > builds.json
-
+          jq -n --arg version "$version" --arg commit "$sha" --slurpfile options build_options.json --slurpfile targets targets.generated.json '{version: $version, commit: $commit, options: $options[0].options, targets: $targets[0]}' > builds.json
           cat builds.json
 
       - name: Create release
