@@ -41,7 +41,7 @@
         { "name": "MAG",             "group": "other", "flags": ["USE_MAGNETOMETER"], "default": false },
         { "name": "OPTICALFLOW",     "group": "other", "flags": ["USE_OPTICALFLOW"], "default": true, "introduced": "2025.12" },
         { "name": "OSD_SD",          "group": "other", "flags": ["USE_OSD_SD", "USE_OSD"], "default": true,  "conflicts": ["OSD_HD"] },
-        { "name": "OSD_HD",          "group": "other", "flags": ["USE_OSD_HD"], "default": true, "conflicts": ["OSD_SD"] },
+        { "name": "OSD_HD",          "group": "other", "flags": ["USE_OSD_HD"], "default": false, "conflicts": ["OSD_SD"] },
         { "name": "FRSKYOSD",        "group": "other", "flags": ["USE_FRSKYOSD", "USE_OSD"], "default": false },
         { "name": "PINIO",           "group": "other", "flags": ["USE_PINIO"], "default": true },
         { "name": "POSITION_HOLD",   "group": "other", "flags": ["USE_POSITION_HOLD"], "default": false, "requires": "GPS или OPTICALFLOW", "introduced": "2025.12" },
