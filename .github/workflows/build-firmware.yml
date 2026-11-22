@@ -23,15 +23,22 @@ on:
         type: string
         default: ''
 
+# Одинаковый таргет и релиз не собираются и не выкладываются параллельно
+concurrency:
+  group: build-firmware-${{ inputs.config }}-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
     env:
       BF_CONFIG: ${{ inputs.config }}
       BF_OPTIONS: ${{ inputs.options }}
+      BF_VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
 
     steps:
       - name: Checkout
@@ -41,107 +48,113 @@ jobs:
           fetch-depth: 1
           ref: ${{ inputs.ref || github.ref }}
 
-      - name: Validate and expand options
+      - name: Validate and canonicalize flags
+        id: validate
         shell: bash
         run: |
           set -euo pipefail
+          # Побайтовая сортировка. Совпадает с default sort() в JS для ASCII.
+          export LC_ALL=C
 
-          [[ "$BF_CONFIG" =~ ^[A-Z0-9_]{1,32}$ ]] || {
-            echo "::error::Недопустимое имя CONFIG"; exit 1; }
+          fail() { echo "::error::$1"; exit 1; }
 
-          # ENABLE_* может содержать «=значение», остальные — только имена
-          [[ ${#BF_OPTIONS} -le 512 && "$BF_OPTIONS" =~ ^[A-Z0-9_+=\ .-]*$ ]] || {
-            echo "::error::Недопустимые символы в опциях"; exit 1; }
+          [[ "$BF_CONFIG" =~ ^[A-Z0-9_]{1,32}$ ]] || fail "Недопустимое имя CONFIG"
+          [[ -z "$BF_VERSION" || "$BF_VERSION" =~ ^ezb-[A-Za-z0-9._-]+$ ]] || fail "Версия должна начинаться с ezb-"
+          [[ ${#BF_OPTIONS} -le 512 ]] || fail "Слишком длинная строка опций"
+          [[ "$BF_OPTIONS" =~ ^[A-Z0-9_+=\ .-]*$ ]] || fail "Недопустимые символы в опциях"
+          jq -e . build_options.json > /dev/null || fail "build_options.json не читается"
 
-          jq -e . build_options.json > /dev/null || {
-            echo "::error::build_options.json не читается"; exit 1; }
+          opt_exists()    { jq -e --arg n "$1" 'any(.options[]; .name == $n)' build_options.json > /dev/null; }
+          opt_group()     { jq -r --arg n "$1" '[.options[] | select(.name == $n) | (.group // "")] | first // ""' build_options.json; }
+          opt_flags()     { jq -r --arg n "$1" '.options[] | select(.name == $n) | .flags[]' build_options.json; }
+          opt_conflicts() { jq -r --arg n "$1" '.options[] | select(.name == $n) | (.conflicts // [])[]' build_options.json; }
+
+          mapfile -t SINGLE_GROUPS < <(jq -r '.single_choice_groups[]' build_options.json)
 
           flags=(-DCLOUD_BUILD)
-          read -r -a chosen <<< "$BF_OPTIONS"
+          read -r -a chosen <<< "$BF_OPTIONS" || true
 
-          # --- 1. ENABLE_*: полный флаг со значением проходит как есть ---
+          # --- 1. ENABLE_*: полный флаг со значением, добавляется как -D<флаг> ---
+          regular=()
           for opt in "${chosen[@]}"; do
             if [[ "$opt" == ENABLE_* ]]; then
-              [[ "$opt" =~ ^ENABLE_[A-Z0-9_]+(=[A-Za-z0-9_./+,-]{1,64})?$ ]] || {
-                echo "::error::Неверный формат ENABLE-флага: $opt"; exit 1; }
-              flags+=("$opt")
+              [[ "$opt" =~ ^ENABLE_[A-Z0-9_]+(=[A-Za-z0-9_./+,-]{1,64})?$ ]] || fail "Неверный формат ENABLE-флага: $opt"
+              flags+=("-D$opt")
+            else
+              regular+=("$opt")
             fi
           done
 
-          # --- 2. Обычные опции: только имена из каталога ---
-          regular=()
-          for opt in "${chosen[@]}"; do
-            [[ "$opt" == ENABLE_* ]] && continue
-            regular+=("$opt")
-          done
-
-          if [[ $(printf '%s\n' "${regular[@]}" | sort -u | wc -l) -ne ${#regular[@]} ]]; then
-            echo "::error::Дубликат среди опций"; exit 1
+          # --- 2. Обычные опции: без дублей и только имена из каталога ---
+          if (( ${#regular[@]} > 0 )); then
+            dup=$(printf '%s\n' "${regular[@]}" | sort | uniq -d)
+            [[ -z "$dup" ]] || fail "Дубликат среди опций: ${dup//$'\n'/ }"
           fi
 
           for opt in "${regular[@]}"; do
-            if ! jq -e --arg n "$opt" 'any(.options[]; .name == $n)' \
-                 build_options.json > /dev/null; then
-              echo "::error::Неизвестная опция: $opt"; exit 1
-            fi
+            opt_exists "$opt" || fail "Неизвестная опция: $opt"
           done
 
-          # --- 3. Единичный выбор в группах радио/телеметрия/мотор ---
-          for g in radio telemetry motor; do
+          # --- 3. Единичный выбор в группах (из single_choice_groups) ---
+          chosen_groups=" "
+          for g in "${SINGLE_GROUPS[@]}"; do
             cnt=0
             for opt in "${regular[@]}"; do
-              if jq -e --arg n "$opt" --arg g "$g" \
-                   'any(.options[]; .name == $n and .group == $g)' \
-                   build_options.json > /dev/null; then
-                cnt=$((cnt+1))
+              if [[ "$(opt_group "$opt")" == "$g" ]]; then
+                cnt=$((cnt + 1))
               fi
             done
-            [[ $cnt -le 1 ]] || {
-              echo "::error::В группе $g допускается только одна опция"; exit 1; }
+            (( cnt <= 1 )) || fail "В группе $g допускается только одна опция"
+            if (( cnt == 1 )); then
+              chosen_groups+="$g "
+            fi
           done
-
-          # --- 4. Конфликты: между выбранными пользователем ---
-          for opt in "${regular[@]}"; do
-            for other in "${regular[@]}"; do
-              [[ "$opt" == "$other" ]] && continue
-              if jq -e --arg o "$opt" --arg t "$other" \
-                   'any(.options[]; .name == $o and ((.conflicts // []) | index($t)))' \
-                   build_options.json > /dev/null; then
-                echo "::error::Опции $opt и $other несовместимы"; exit 1
-              fi
-            done
-          done
-
-          # --- 5. Конфликтующие с выбором дефолты — исключить ---
-          excluded=()
+          # --- 4. Конфликты между выбранными пользователем опциями ---
+          excluded=" "
           for opt in "${regular[@]}"; do
             while read -r c; do
-              [[ -n "$c" ]] && excluded+=("$c")
-            done < <(jq -r --arg n "$opt" '.options[] | select(.name == $n) | (.conflicts // [])[]' build_options.json)
+              [[ -n "$c" ]] || continue
+              for other in "${regular[@]}"; do
+                if [[ "$other" == "$c" ]]; then
+                  fail "Опции $opt и $other несовместимы"
+                fi
+              done
+              excluded+="$c "
+            done < <(opt_conflicts "$opt")
           done
 
+          # --- 5. Дефолты: пропуск конфликтующих с выбором и занятых групп ---
           while read -r name; do
-            if [[ " ${excluded[*]:-} " == *" $name "* ]]; then
+            if [[ " $excluded " == *" $name "* ]]; then
               echo "Пропуск дефолта $name: конфликтует с выбором пользователя"
+              continue
+            fi
+            g=$(opt_group "$name")
+            if [[ -n "$g" && " $chosen_groups " == *" $g "* ]]; then
+              echo "Пропуск дефолта $name: группа $g занята выбором пользователя"
               continue
             fi
             while read -r f; do
               [[ -n "$f" ]] && flags+=("-D$f")
-            done < <(jq -r --arg n "$name" '.options[] | select(.name == $n) | .flags[]' build_options.json)
-          done < <(jq -r '.options[] | select(.default == true) | .name')
+            done < <(opt_flags "$name")
+          done < <(jq -r '.options[] | select(.default == true) | .name' build_options.json)
 
           # --- 6. Флаги выбранных пользователем опций ---
           for opt in "${regular[@]}"; do
             while read -r f; do
               [[ -n "$f" ]] && flags+=("-D$f")
-            done < <(jq -r --arg n "$opt" '.options[] | select(.name == $n) | .flags[]' build_options.json)
+            done < <(opt_flags "$opt")
           done
 
-          # --- 7. Канонизация: сортировка + дедупликация ---
-          mapfile -t flags < <(printf '%s\n' "${flags[@]}" | sort -u)
-          canonical=$(printf '%s ' "${flags[@]}")
+          # --- 7. Канонизация: сортировка, дедупликация, строка с хвостовым пробелом ---
+          mapfile -t uniq_flags < <(printf '%s\n' "${flags[@]}" | sort -u)
+          canonical=$(printf '%s ' "${uniq_flags[@]}")
+          hash=$(printf '%s' "$canonical" | sha256sum | cut -c1-8)
+
           echo "Итоговые флаги: $canonical"
+          echo "Хэш: $hash"
           echo "BF_FLAGS_CANONICAL=$canonical" >> "$GITHUB_ENV"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
       - name: Install required ARM toolchain
         run: make arm_sdk_install
@@ -152,7 +165,10 @@ jobs:
 
       - name: Rename output
         shell: bash
+        env:
+          BF_HASH: ${{ steps.validate.outputs.hash }}
         run: |
+          set -euo pipefail
           shopt -s nullglob
           files=(obj/*.hex)
           if (( ${#files[@]} == 0 )); then
@@ -160,29 +176,31 @@ jobs:
           fi
 
           mkdir -p out
-          # хэш считаем по каноническим флагам, а не по сырому вводу:
-          # одинаковые сборки дают одинаковое имя файла
-          hash=$(printf '%s' "$BF_FLAGS_CANONICAL" | sha256sum | cut -c1-8)
           for file in "${files[@]}"; do
             name=${file##*/}
-            cp -- "$file" "out/${name%.hex}_${hash}.hex"
+            base=${name%.hex}
+            if [[ "$base" != *"$BF_CONFIG"* ]]; then
+              echo "::error::Имя $name не содержит CONFIG ($BF_CONFIG)"; exit 1
+            fi
+            cp -- "$file" "out/${base}_${BF_HASH}.hex"
           done
 
       - name: Upload to release
         if: ${{ inputs.version != '' }}
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BF_VERSION: ${{ inputs.version }}
         run: |
-          gh release view "$BF_VERSION" > /dev/null 2>&1 || {
-            echo "::error::Релиз $BF_VERSION не существует (сначала release-catalog.yml)"; exit 1; }
+          set -euo pipefail
+          if ! gh release view "$BF_VERSION" > /dev/null 2>&1; then
+            echo "::error::Релиз $BF_VERSION не существует (сначала release-catalog.yml)"; exit 1
+          fi
 
-          mkdir -p out
+          # Список ассетов читается один раз, без pipe в grep -q
+          existing=$(gh release view "$BF_VERSION" --json assets -q '.assets[].name')
+
           shopt -s nullglob
           for file in out/*.hex; do
             name=${file##*/}
-            if gh release view "$BF_VERSION" --json assets -q '.assets[].name' | grep -qx "$name"; then
+            if grep -qxF -- "$name" <<< "$existing"; then
               echo "Asset $name уже есть в релизе — пропуск"
             else
               gh release upload "$BF_VERSION" "$file"
@@ -192,7 +210,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ inputs.config }}
+          name: firmware-${{ inputs.config }}-${{ steps.validate.outputs.hash }}
           path: out/*.hex
           if-no-files-found: error
           retention-days: 30
