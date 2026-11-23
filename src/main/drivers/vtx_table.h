@@ -30,7 +30,7 @@
 #include "common/utils.h"
 
 #ifdef USE_VTX_TABLE
-#define VTX_TABLE_MAX_BANDS             8 // Maximum number of bands
+#define VTX_TABLE_MAX_BANDS             20 // Maximum number of bands
 #define VTX_TABLE_MAX_CHANNELS          8 // Maximum number of channels per band
 #define VTX_TABLE_MAX_POWER_LEVELS      8 // Maximum number of power levels
 #define VTX_TABLE_CHANNEL_NAME_LENGTH   1
