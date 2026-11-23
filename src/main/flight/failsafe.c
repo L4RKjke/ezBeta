@@ -71,7 +71,7 @@
 
 static failsafeState_t failsafeState;
 
-PG_REGISTER_WITH_RESET_TEMPLATE(failsafeConfig_t, failsafeConfig, PG_FAILSAFE_CONFIG, 2);
+PG_REGISTER_WITH_RESET_TEMPLATE(failsafeConfig_t, failsafeConfig, PG_FAILSAFE_CONFIG, 3);
 
 #ifdef USE_RACE_PRO
 #define DEFAULT_FAILSAFE_RECOVERY_DELAY 1            // 100ms of valid rx data needed to allow recovery from failsafe and arming block
@@ -91,7 +91,8 @@ PG_RESET_TEMPLATE(failsafeConfig_t, failsafeConfig,
     .failsafe_switch_mode = FAILSAFE_SWITCH_MODE_STAGE1, // default failsafe switch action is identical to rc link loss
     .failsafe_procedure = FAILSAFE_PROCEDURE_DROP_IT,    // default full failsafe procedure is 0: auto-landing
     .failsafe_recovery_delay = DEFAULT_FAILSAFE_RECOVERY_DELAY,
-    .failsafe_stick_threshold = 30                       // 30 percent of stick deflection to exit GPS Rescue procedure
+    .failsafe_stick_threshold = 30,                      // 30 percent of stick deflection to exit GPS Rescue procedure
+    .failsafe_stage2_disabled = 0,                       // === EZBETA === по умолчанию Stage 2 работает
 );
 
 const char * const failsafeProcedureNames[FAILSAFE_PROCEDURE_COUNT] = {
@@ -361,22 +362,22 @@ FAST_CODE_NOINLINE void failsafeUpdateState(void)
                         //  allow re-arming 1 second after Rx recovery, customisable
                         reprocessState = true;
                     } else if (!receivingRxData) {
-                        if ((millis() > failsafeState.throttleLowPeriod && !autopilotControlsThrottle
+                        // === EZBETA === если stage2_disabled, не идём в FAILSAFE_LANDED через "just disarm",
+                        // а всегда переходим в FAILSAFE_RX_LOSS_DETECTED, где останемся навсегда.
+                        if (!failsafeConfig()->failsafe_stage2_disabled
+                            && ((millis() > failsafeState.throttleLowPeriod && !autopilotControlsThrottle
 #ifdef USE_GPS_RESCUE
-                            && failsafeConfig()->failsafe_procedure != FAILSAFE_PROCEDURE_GPS_RESCUE
+                                && failsafeConfig()->failsafe_procedure != FAILSAFE_PROCEDURE_GPS_RESCUE
 #endif
-                            )
-                            // a wing still in the hand is on the ground, whatever the throttle
-                            || launchWingAwaitingThrow()) {
+                                )
+                                // a wing still in the hand is on the ground, whatever the throttle
+                                || launchWingAwaitingThrow())) {
                             //  JustDisarm if throttle was LOW for at least 'failsafe_throttle_low_delay' before failsafe
-                            //  protects against false arming when the Tx is powered up after the quad
                             failsafeState.active = true;
                             failsafeState.events++;
                             ENABLE_FLIGHT_MODE(FAILSAFE_MODE);
                             failsafeState.phase = FAILSAFE_LANDED;
-                            //  go directly to FAILSAFE_LANDED
                             failsafeState.receivingRxDataPeriodPreset = failsafeState.rxDataRecoveryPeriod;
-                            //  allow re-arming 1 second after Rx recovery, customisable
                         } else {
                             failsafeState.phase = FAILSAFE_RX_LOSS_DETECTED;
                         }
@@ -394,46 +395,58 @@ FAST_CODE_NOINLINE void failsafeUpdateState(void)
                 }
                 break;
 
-            case FAILSAFE_RX_LOSS_DETECTED:
-                if (receivingRxData) {
-                    failsafeState.phase = FAILSAFE_RX_LOSS_RECOVERED;
-                } else {
-                    failsafeState.active = true;
-                    failsafeState.events++;
-#if ENABLE_FLIGHT_PLAN
-                    if (FLIGHT_MODE(AUTOPILOT_MODE) && flightPlanNavIsActive()
-                        && flightPlanNavGetState() != FP_NAV_COMPLETE
-                        && flightPlanNavGetState() != FP_NAV_ABORTED
-                        && autopilotConfig()->rxLossPolicy == AP_RX_LOSS_CONTINUE) {
-                        // keep flying the mission; FAILSAFE_AUTOPILOT monitors it
-                        // and falls back to the configured procedure when it ends
-                        ENABLE_FLIGHT_MODE(FAILSAFE_MODE);
-                        failsafeState.phase = FAILSAFE_AUTOPILOT;
-#if ENABLE_RESCUE_PLAN
-                        // mission already engaged: no engage grace applies
-                        failsafeState.autopilotEngageDeadline = millis();
-#endif
-                    } else if (FLIGHT_MODE(AUTOPILOT_MODE)
-                        && autopilotConfig()->rxLossPolicy == AP_RX_LOSS_LAND) {
-                        // land at the current position: the mission disengages, and
-                        // pos-hold anchors the failsafe auto-landing descent
-                        failsafeStartProcedure(FAILSAFE_PROCEDURE_AUTO_LANDING);
-                    } else
-#endif
-                    {
-                        failsafeStartProcedure(failsafeConfig()->failsafe_procedure);
-                    }
-                    if (failsafeState.boxFailsafeSwitchWasOn) {
-                        failsafeState.receivingRxDataPeriodPreset = 0;
-                        // recover immediately if failsafe was triggered by a switch
+                case FAILSAFE_RX_LOSS_DETECTED:
+                    if (receivingRxData) {
+                        failsafeState.phase = FAILSAFE_RX_LOSS_RECOVERED;
+                        reprocessState = true;
+                    } else if (failsafeConfig()->failsafe_stage2_disabled) {
+                        // === EZBETA === Бесконечный stage 1: остаёмся здесь, пока сигнал не вернётся.
+                        // Stage 2 (AUTO-LAND / DROP / GPS-RESCUE / LANDED) не запускается.
+                        // rxfail-значения каналов продолжают применяться в rx.c — это и есть stage 1.
+                        if (!failsafeState.active) {
+                            // первый вход в это состояние — фиксируем событие один раз
+                            failsafeState.active = true;
+                            failsafeState.events++;
+                            if (failsafeState.boxFailsafeSwitchWasOn) {
+                                failsafeState.receivingRxDataPeriodPreset = 0;
+                            } else {
+                                failsafeState.receivingRxDataPeriodPreset = failsafeState.rxDataRecoveryPeriod;
+                            }
+                        }
+                        // Фазу не меняем. reprocessState НЕ ставим в true — иначе бесконечный цикл
+                        // в do/while внутри одного вызова failsafeUpdateState().
+                        // На следующем тике (10 мс) снова сюда зайдём и проверим receivingRxData.
                     } else {
-                        failsafeState.receivingRxDataPeriodPreset = failsafeState.rxDataRecoveryPeriod;
-                        // recover from true link loss failsafe 1 second after RC Link recovers
+                        // ---- стандартное поведение Betaflight ----
+                        failsafeState.active = true;
+                        failsafeState.events++;
+                #if ENABLE_FLIGHT_PLAN
+                        if (FLIGHT_MODE(AUTOPILOT_MODE) && flightPlanNavIsActive()
+                            && flightPlanNavGetState() != FP_NAV_COMPLETE
+                            && flightPlanNavGetState() != FP_NAV_ABORTED
+                            && autopilotConfig()->rxLossPolicy == AP_RX_LOSS_CONTINUE) {
+                            ENABLE_FLIGHT_MODE(FAILSAFE_MODE);
+                            failsafeState.phase = FAILSAFE_AUTOPILOT;
+                #if ENABLE_RESCUE_PLAN
+                            failsafeState.autopilotEngageDeadline = millis();
+                #endif
+                        } else if (FLIGHT_MODE(AUTOPILOT_MODE)
+                            && autopilotConfig()->rxLossPolicy == AP_RX_LOSS_LAND) {
+                            failsafeStartProcedure(FAILSAFE_PROCEDURE_AUTO_LANDING);
+                        } else
+                #endif
+                        {
+                            failsafeStartProcedure(failsafeConfig()->failsafe_procedure);
+                        }
+                        if (failsafeState.boxFailsafeSwitchWasOn) {
+                            failsafeState.receivingRxDataPeriodPreset = 0;
+                        } else {
+                            failsafeState.receivingRxDataPeriodPreset = failsafeState.rxDataRecoveryPeriod;
+                        }
+                        reprocessState = true;
                     }
-                }
-                reprocessState = true;
-                break;
-
+                    break;
+                    
             case FAILSAFE_LANDING:
                 if (receivingRxData) {
                     failsafeState.phase = FAILSAFE_RX_LOSS_RECOVERED;
