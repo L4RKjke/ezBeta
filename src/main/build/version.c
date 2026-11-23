@@ -23,7 +23,10 @@
 #include "version.h"
 
 const char * const targetName = __TARGET__;
-const char * const shortGitRevision = __REVISION__;
+// === EZBETA ===
+// Уникальная метка сборки. Видна в MSP_BUILD_INFO → buildInfo.gitRevision.
+// Требования: ровно 7 символов, не "norevis" (иначе конфигуратор посчитает сборку cloud-build).
+const char * const shortGitRevision = "ezbface";
 #if defined(__CONFIG_REVISION__)
 const char * const shortConfigGitRevision = __CONFIG_REVISION__;
 #endif

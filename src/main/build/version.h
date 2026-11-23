@@ -23,7 +23,7 @@
 #include "common/utils.h"
 
 #define FC_FIRMWARE_NAME            "Betaflight"
-#define FC_FIRMWARE_IDENTIFIER      "EZBF" // 4 символа, case-sensitive!
+#define FC_FIRMWARE_IDENTIFIER      "BTFL"
 
 #define FC_CALVER_BASE_YEAR 2000
 
