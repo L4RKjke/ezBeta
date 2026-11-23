@@ -153,7 +153,8 @@ STATIC_UNIT_TESTED vtxSettingsConfig_t vtxGetSettings(void)
 
 static bool vtxProcessBandAndChannel(vtxDevice_t *vtxDevice)
 {
-    if (!ARMING_FLAG(ARMED)) {
+    // === EZBETA ===
+    if (!ARMING_FLAG(ARMED) || vtxConfig()->allowVtxChangesWhileArmed) {
         uint8_t vtxBand;
         uint8_t vtxChan;
         if (vtxCommonGetBandAndChannel(vtxDevice, &vtxBand, &vtxChan)) {

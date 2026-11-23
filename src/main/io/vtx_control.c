@@ -47,11 +47,14 @@
 #include "pg/pg.h"
 #include "pg/pg_ids.h"
 
-PG_REGISTER_WITH_RESET_TEMPLATE(vtxConfig_t, vtxConfig, PG_VTX_CONFIG, 1);
+// Версия поднята с 1 до 2 — при первом запуске новой прошивки PG сбросится
+// на дефолты, чтобы новое поле allowVtxChangesWhileArmed инициализировалось 0.
+PG_REGISTER_WITH_RESET_TEMPLATE(vtxConfig_t, vtxConfig, PG_VTX_CONFIG, 2);
 
 PG_RESET_TEMPLATE(vtxConfig_t, vtxConfig,
 //    .vtxChannelActivationConditions = { 0 },
-    .halfDuplex = true
+    .halfDuplex = true,
+    .allowVtxChangesWhileArmed = 0   // === EZBETA === по умолчанию выключено
 );
 
 // Latched on first arm and intentionally never cleared for the rest of the session, so band
@@ -75,7 +78,8 @@ void vtxControlInputPoll(void)
 
 static void vtxUpdateBandAndChannel(uint8_t bandStep, uint8_t channelStep)
 {
-    if (ARMING_FLAG(ARMED)) {
+    // === EZBETA === блокируем после арма только если фича выключена
+    if (ARMING_FLAG(ARMED) && !vtxConfig()->allowVtxChangesWhileArmed) {
         locked = 1;
     }
 
@@ -107,16 +111,12 @@ void vtxDecrementChannel(void)
 
 void vtxUpdateActivatedChannel(void)
 {
-    if (ARMING_FLAG(ARMED)) {
+    // === EZBETA ===
+    if (ARMING_FLAG(ARMED) && !vtxConfig()->allowVtxChangesWhileArmed) {
         locked = 1;
     }
 
     if (vtxCommonDevice()) {
-        // Apply every active activation condition, like updateActivatedModes() does for mode
-        // ranges. Stopping at the first match (or remembering only the last applied index)
-        // starves higher-indexed conditions when three or more are active at once, so band,
-        // channel and power assigned to separate switches could not all take effect. When two
-        // active conditions set the same field, the highest-indexed one wins (last write).
         for (uint8_t index = 0; index < MAX_CHANNEL_ACTIVATION_CONDITION_COUNT; index++) {
             const vtxChannelActivationCondition_t *vtxChannelActivationCondition = &vtxConfig()->vtxChannelActivationConditions[index];
 
@@ -130,6 +130,7 @@ void vtxUpdateActivatedChannel(void)
                     }
                 }
 
+                // power — БЕЗ ИЗМЕНЕНИЙ, стандартное поведение Betaflight
                 if (vtxChannelActivationCondition->power > 0) {
                     vtxSettingsConfigMutable()->power = vtxChannelActivationCondition->power;
                 }
@@ -140,6 +141,11 @@ void vtxUpdateActivatedChannel(void)
 
 void vtxCycleBandOrChannel(const uint8_t bandStep, const uint8_t channelStep)
 {
+    // === EZBETA ===
+    if (ARMING_FLAG(ARMED) && !vtxConfig()->allowVtxChangesWhileArmed) {
+        return;
+    }
+    // дальше без изменений
     const vtxDevice_t *vtxDevice = vtxCommonDevice();
     if (vtxDevice) {
         uint8_t band = 0, channel = 0;
