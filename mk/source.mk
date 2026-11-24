@@ -489,6 +489,7 @@ SPEED_OPTIMISED_SRC += \
             fc/tasks.c \
             fc/rc.c \
             fc/rc_controls.c \
+            fc/anti_disarm.c \
             fc/runtime_config.c \
             flight/dyn_notch_filter.c \
             flight/imu.c \

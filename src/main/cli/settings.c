@@ -104,6 +104,7 @@
 #include "pg/osd_nav_map.h"
 #include "pg/pg.h"
 #include "pg/pg_ids.h"
+#include "fc/anti_disarm.h"
 #include "pg/pilot.h"
 #include "pg/pinio.h"
 #include "pg/piniobox.h"
@@ -1182,6 +1183,11 @@ const clivalue_t valueTable[] = {
     { "auto_disarm_delay",          VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 0, AUTO_DISARM_DELAY_MAX }, PG_ARMING_CONFIG, offsetof(armingConfig_t, auto_disarm_delay) },
     { PARAM_NAME_GYRO_CAL_ON_FIRST_ARM, VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON }, PG_ARMING_CONFIG, offsetof(armingConfig_t, gyro_cal_on_first_arm) },
     { PARAM_NAME_PREARM_ALLOW_REARM, VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON }, PG_ARMING_CONFIG, offsetof(armingConfig_t, prearm_allow_rearm) },
+// PG_ANTI_DISARM_CONFIG
+    { "disarm_guard",          VAR_UINT8 | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON }, PG_ANTI_DISARM_CONFIG, offsetof(antiDisarmConfig_t, enabled) },
+    { "disarm_guard_alt_m",    VAR_UINT8 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 100 }, PG_ANTI_DISARM_CONFIG, offsetof(antiDisarmConfig_t, altM) },
+    { "disarm_guard_throttle", VAR_UINT8 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 100 }, PG_ANTI_DISARM_CONFIG, offsetof(antiDisarmConfig_t, throttlePercent) },
+
 // PG_GPS_CONFIG
 #ifdef USE_GPS
     { PARAM_NAME_GPS_PROVIDER,               VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_GPS_PROVIDER },   PG_GPS_CONFIG, offsetof(gpsConfig_t, provider) },

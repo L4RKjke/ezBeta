@@ -40,6 +40,7 @@
 #include "config/config.h"
 #include "fc/core.h"
 #include "fc/rc.h"
+#include "fc/anti_disarm.h"
 #include "fc/tasks.h"
 #include "fc/runtime_config.h"
 
@@ -199,20 +200,24 @@ void processRcStickPositions(void)
                 // That's why we explicitly allow disarm here if BOXFAILSAFE switch is active
                 // Note that BOXGPSRESCUE mode does not trigger failsafe - we can always disarm in that mode
                 rcDisarmTicks++;
-                if (rcDisarmTicks > 3) {
-                    // require three duplicate disarm values in a row before we disarm
-                    disarm(DISARM_REASON_SWITCH);
+                if (rcDisarmTicks > 3) { // require three duplicate disarm values in a row before we disarm
+                    if (antiDisarmDisarmAllowed()) {
+                        disarm(DISARM_REASON_SWITCH);
+                    }
                 }
+
             }
         }
     } else if (rcSticks == THR_LO + YAW_LO + PIT_CE + ROL_CE) {
         if (rcDelayMs >= ARM_DELAY_MS && !doNotRepeat) {
             doNotRepeat = true;
             // Disarm on throttle down + yaw
-             disarmUserRequested = true;
+            disarmUserRequested = true;
             resetTryingToArm();
             if (ARMING_FLAG(ARMED)){
-                disarm(DISARM_REASON_STICKS);
+                if (antiDisarmDisarmAllowed()) {
+                    disarm(DISARM_REASON_STICKS);
+                }
            } else {
                 beeper(BEEPER_DISARM_REPEAT);     // sound tone while stick held
                 repeatAfter(STICK_AUTOREPEAT_MS); // disarm tone will repeat
