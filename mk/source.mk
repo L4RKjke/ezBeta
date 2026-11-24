@@ -166,6 +166,7 @@ COMMON_SRC = \
             fc/rc.c \
             fc/rc_adjustments.c \
             fc/rc_controls.c \
+            fc/anti_disarm.c
             fc/rc_modes.c \
             flight/alt_hold_multirotor.c \
             flight/alt_hold_wing.c \
