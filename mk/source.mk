@@ -451,7 +451,9 @@ SPEED_OPTIMISED_SRC += \
             drivers/accgyro/accgyro_spi_bmi160.c \
             drivers/accgyro/accgyro_spi_bmi270.c \
             drivers/accgyro/accgyro_spi_bmi423.c \
-            drivers/accgyro/accgyro_spi_lsm6dso.c
+            drivers/accgyro/accgyro_spi_lsm6dso.c \
+            src/main/fc/rc_controls.c \
+            src/main/fc/core.c \
 
 endif
 
@@ -489,7 +491,7 @@ SPEED_OPTIMISED_SRC += \
             fc/tasks.c \
             fc/rc.c \
             fc/rc_controls.c \
-            fc/anti_disarm.c \
+            src/main/fc/anti_disarm.c \
             fc/runtime_config.c \
             flight/dyn_notch_filter.c \
             flight/imu.c \
