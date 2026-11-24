@@ -1040,7 +1040,7 @@ const clivalue_t valueTable[] = {
     { "failsafe_throttle_low_delay",VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, FAILSAFE_THROTTLE_LOW_DELAY_MAX }, PG_FAILSAFE_CONFIG, offsetof(failsafeConfig_t, failsafe_throttle_low_delay) },
     { "failsafe_procedure",         VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_FAILSAFE }, PG_FAILSAFE_CONFIG, offsetof(failsafeConfig_t, failsafe_procedure) },
     { "failsafe_recovery_delay",    VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 1, 200 }, PG_FAILSAFE_CONFIG, offsetof(failsafeConfig_t, failsafe_recovery_delay) },
-    { "failsafe_stick_threshold",   VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 0, 50 }, PG_FAILSAFE_CONFIG, offsetof(failsafeConfig_t, F) },
+    { "failsafe_stick_threshold",   VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 0, 50 }, PG_FAILSAFE_CONFIG, offsetof(failsafeConfig_t, failsafe_stick_threshold) },
     { "failsafe_stage2_disabled",   VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1 }, PG_FAILSAFE_CONFIG, offsetof(failsafeConfig_t, failsafe_stage2_disabled) },  
 // PG_BOARDALIGNMENT_CONFIG
     { "align_board_roll",           VAR_INT16  | MASTER_VALUE, .config.minmax = { BOARD_ALIGNMENT_MIN, BOARD_ALIGNMENT_MAX }, PG_BOARD_ALIGNMENT, offsetof(boardAlignment_t, rollDegrees) },
