@@ -185,4 +185,4 @@
 #define PG_RESERVED_FOR_TESTING_3 4093
 
 // anti-disarm guard
-#define PG_ANTI_DISARM_CONFIG   4096
+#define PG_ANTI_DISARM_CONFIG   4090
