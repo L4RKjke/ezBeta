@@ -3,7 +3,7 @@
 #include "common/maths.h"     // constrainf
 #include "fc/rc.h"            // rcCommand
 #include "pg/pg_ids.h"
-#include "sensors/altitude.h" // getEstimatedAltitudeCm
+#include "flight/position.h"  // getEstimatedAltitudeCm
 
 PG_REGISTER_WITH_RESET_TEMPLATE(antiDisarmConfig_t, antiDisarmConfig, PG_ANTI_DISARM_CONFIG, 0);
 
